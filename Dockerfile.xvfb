@@ -1,0 +1,57 @@
+#docker buildx build --platform linux/amd64 -f Dockerfile -t bnhf/cc4c:xvfb . --push --no-cache
+FROM lscr.io/linuxserver/xvfb:debianbookworm AS xvfb
+
+FROM node:lts-bookworm-slim AS base
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Add contrib and non-free sources to apt
+# Delete deb822 file and manage everything in sources.list
+RUN rm -f /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' \
+  "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" \
+  "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" \
+  "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" \
+  > /etc/apt/sources.list
+
+# Core system and Chrome runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  ca-certificates gnupg wget procps \
+  xvfb xserver-xorg-core xserver-common \
+  x11-apps x11-utils x11-xkb-utils x11-xserver-utils xauth xdg-utils x11vnc \
+  libgl1 libgl1-mesa-dri libegl1 libgbm1 libdrm2 libxshmfence1 libunwind8 \
+  libva2 libva-drm2 libva-x11-2 intel-media-va-driver-non-free vainfo \
+  mesa-vulkan-drivers mesa-utils \
+  && rm -rf /var/lib/apt/lists/*
+
+# Swap in LinuxServer's DRI3/Glamor-patched Xvfb
+COPY --from=xvfb /usr/bin/Xvfb /usr/bin/Xvfb
+RUN ldconfig
+
+# Add Google Chrome (stable)
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \
+    sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    google-chrome-stable fonts-ipafont-gothic fonts-wqy-zenhei \
+    fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1
+
+# Environment setup
+ENV DISPLAY=:99
+ENV CHROME_BIN=/usr/bin/google-chrome
+ENV LIBVA_DRIVER_NAME=iHD
+ENV DOCKER=true
+
+# Create app directory and copy files
+WORKDIR /home/chrome
+COPY main.js package.json bun.lock start.sh ./
+
+# Install Node dependencies
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+RUN npm install -g bun
+RUN bun install
+
+# Expose app and VNC ports
+EXPOSE 5589 5900
+
+# Startup
+ENTRYPOINT ["./start.sh"]

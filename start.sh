@@ -20,8 +20,12 @@
 
 trap 'echo "Cleaning up..."; pkill -f "Xvfb :99"; pkill -f "x11vnc"; exit' SIGINT SIGTERM EXIT
 
+export XDG_RUNTIME_DIR=/tmp/xdg-runtime
+mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+
 google-chrome --version
-Xvfb :99 -screen 0 1920x1080x16 &
+#Xvfb :99 -screen 0 1920x1080x16 &
+Xvfb :99 -screen 0 1920x1080x24 +iglx +extension GLX -noreset &
 x11vnc -quiet -nopw -display :99 -forever >x11vnc.log 2>&1 &
 sleep 1
 grep "The VNC desktop is:" x11vnc.log

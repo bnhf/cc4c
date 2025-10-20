@@ -1,0 +1,74 @@
+# -----------------------------------------------------------------------------
+# GPU-ready base (DRI3 + Mesa + Zink auto-wiring)
+# -----------------------------------------------------------------------------
+FROM ghcr.io/linuxserver/baseimage-selkies:debianbookworm
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Minimal runtime deps + VA-API check tools (Selkies already has the GPU stack)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg wget procps \
+    fonts-liberation \
+    libva2 libva-drm2 libva-x11-2 intel-media-va-driver-non-free vainfo \
+    x11-utils mesa-utils \
+ && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# Google Chrome (stable) — signed-by keyring (no apt-key)
+# -----------------------------------------------------------------------------
+RUN mkdir -p /usr/share/keyrings \
+ && wget -qO /usr/share/keyrings/google-linux.gpg https://dl.google.com/linux/linux_signing_key.pub \
+ && gpg --dearmor --yes /usr/share/keyrings/google-linux.gpg \
+ && mv /usr/share/keyrings/google-linux.gpg.gpg /usr/share/keyrings/google-linux.gpg \
+ && printf '%s\n' \
+      "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+    > /etc/apt/sources.list.d/google-chrome.list \
+ && apt-get update && apt-get install -y --no-install-recommends \
+    google-chrome-stable \
+ && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# Bun runtime (for `bun install` and `bun main.js`)
+# -----------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends bash && rm -rf /var/lib/apt/lists/*
+ENV BUN_INSTALL=/root/.bun
+ENV PATH="${BUN_INSTALL}/bin:${PATH}"
+RUN bash -lc 'curl -fsSL https://bun.sh/install | bash'
+
+# -----------------------------------------------------------------------------
+# Environment (Selkies manages the display and GPU path)
+# -----------------------------------------------------------------------------
+# NOTE:
+# - Selkies will auto-enable Zink (GL-on-Vulkan) when a GPU is present.
+#   To *disable* that behavior, set DISABLE_ZINK=true at runtime.
+# - DRINODE can be used to point at a specific render node if you need it.
+ENV LIBVA_DRIVER_NAME=iHD \
+    XDG_RUNTIME_DIR=/tmp/xdg-runtime \
+    DOCKER=true
+# optional defaults — change/override at runtime if desired:
+ENV DISABLE_ZINK=false \
+    DRINODE=/dev/dri/renderD128
+
+RUN mkdir -p /tmp/xdg-runtime && chmod 700 /tmp/xdg-runtime
+
+# -----------------------------------------------------------------------------
+# App
+# -----------------------------------------------------------------------------
+WORKDIR /home/chrome
+COPY main.js package.json bun.lock start.sh ./
+
+# Install deps with Bun (uses your package.json / lockfile)
+RUN bun install
+
+# -----------------------------------------------------------------------------
+# Networking
+# -----------------------------------------------------------------------------
+# Your app’s port; Selkies’ own web desktop (if you use it) listens on 3001
+EXPOSE 5589
+
+# -----------------------------------------------------------------------------
+# Start
+# -----------------------------------------------------------------------------
+# IMPORTANT: Do not start your own Xvfb here—the Selkies base already runs
+# a GPU-accelerated X session. Your start.sh should *not* launch Xvfb.
+ENTRYPOINT ["./start.sh"]
